@@ -85,3 +85,40 @@ From the project root:
 
 ```powershell
 uv run streamlit run src/cap_931_amira_lions/app.py
+## API Connection Test
+
+On October 12, 2026, api_check.py successfully connected to OpenAI.
+
+- Response: API connection successful
+- Model returned: gpt-4.1-mini-2025-04-14
+- Input tokens: 14
+- Output tokens: 4
+- Total tokens: 18
+
+The API key is stored locally in .env, which Git ignores.
+## Challenges and Solutions
+
+### Website whitespace caused a false-negative name check
+
+When I tested web_research.py against the dealership's staff page,
+the download succeeded, but an exact search for "Nick Schmidt"
+returned False.
+
+I inspected the extracted text and found that the page contained
+"Nick  Schmidt" with two spaces, plus separate lines for his name.
+
+For the verification check, I normalized whitespace using:
+
+    normalized = " ".join(page["text"].split()).lower()
+
+split() separates text at whitespace, and join() reconnects the
+words with single spaces. lower() makes the comparison insensitive
+to capitalization.
+
+After this change, the check found both Nick Schmidt and
+"General Manager/Owner". The retrieval error was None.
+
+This taught me that a failed text match does not necessarily mean
+the source information is missing. I kept the original extracted
+text's line breaks for readability; normalization was used only
+in the verification check.
