@@ -1,0 +1,37 @@
+# This file tells Git which files and folders to leave out of commits.
+# Keep source code, README.md, pyproject.toml, uv.lock, and
+# .python-version tracked so others can reproduce the project.
+
+# PYTHON-GENERATED FILES
+# Python creates these files automatically. Do not edit or commit them.
+
+# Ignore folders containing cached Python code.
+__pycache__/
+
+# Ignore compiled Python files, such as .pyc and .pyo.
+# This does not exclude .py source files.
+*.py[oc]
+
+# Ignore folders created when building or packaging the application.
+build/
+dist/
+wheels/
+
+# Ignore automatically generated package information.
+*.egg-info
+
+# VIRTUAL ENVIRONMENT
+# This folder contains the project's installed Python packages.
+# Others recreate it using uv and the committed dependency files.
+.venv/
+
+# LOCAL CREDENTIALS
+# Store real API keys in .env. Never put real keys in source code.
+# These rules prevent .env and related files from being committed.
+.env
+.env.*
+
+# The ! creates an exception to the rule above.
+# Allow .env.example to be committed as a setup guide.
+# Put placeholders in .env.example, never real API keys.
+!.env.example

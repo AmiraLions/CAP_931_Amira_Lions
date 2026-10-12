@@ -1,0 +1,19 @@
+[project]
+name = "cap-931-amira-lions"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Amira Lions", email = "amiralions@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "streamlit>=1.65.0",
+]
+
+[project.scripts]
+cap-931-amira-lions = "cap_931_amira_lions:main"
+
+[build-system]
+requires = ["uv_build>=0.12.17,<0.13.0"]
+build-backend = "uv_build"
