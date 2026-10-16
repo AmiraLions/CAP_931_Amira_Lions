@@ -35,3 +35,5 @@ wheels/
 # Allow .env.example to be committed as a setup guide.
 # Put placeholders in .env.example, never real API keys.
 !.env.example
+# Keep the local API-key backup out of Git.
+Project API Key*.txt

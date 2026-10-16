@@ -24,6 +24,9 @@ from openai import OpenAIError
 from cap_931_amira_lions.web_research import fetch_page
 from cap_931_amira_lions.llm_client import generate_brief
 
+# Read uploaded PDFs and TXT files locally before any model request.
+from cap_931_amira_lions.document_reader import read_document, MAX_FILE_BYTES
+
 
 def valid_url(value):
     """Check basic URL format, not website availability."""
@@ -45,6 +48,8 @@ for key, initial_value in {
     "account_inputs": None,
     "retrieved_pages": [],
     "brief_result": None,
+    "product_document": None,
+    "include_product_document": False,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = initial_value
@@ -73,7 +78,7 @@ with st.form("sales_inputs"):
 
     # Each line becomes a separate competitor source.
     competitor_urls = st.text_area(
-        "Competitor URLs â€” one per line",
+        "Competitor URLs - one per line",
         value="\n".join([
             "https://coachmenrv.com/nova",
             "https://coachmenrv.com/pixel",
@@ -110,7 +115,7 @@ with st.form("sales_inputs"):
     # may lack, such as staff roles, new inventory, or company news.
     # This optional field does not replace the prospect's main URL.
     additional_urls = st.text_area(
-        "Additional prospect source URLs â€” optional, one per line",
+        "Additional prospect source URLs - optional, one per line",
         # Save these as defaults so restarting does not lose inventory pages.
         # They remain editable for other prospective accounts.
         value="\n".join([
@@ -123,6 +128,28 @@ with st.form("sales_inputs"):
         ]),
     )
 
+    # Uploading or reviewing a file does not contact OpenAI.
+    # The file stays in session memory; we do not save its bytes to disk.
+    # The reader also enforces a 5 MB limit and a 30-page PDF limit.
+    product_upload = st.file_uploader(
+        "Product overview - optional PDF or TXT",
+        type=["pdf", "txt"],
+        help="Text-based PDF or UTF-8 TXT, up to 5 MB. Scans need OCR.",
+    )
+
+    # The user can preview locally without agreeing to send the text.
+    # Explicitly identify the external service and the later action.
+    include_document = st.checkbox(
+        "Include the extracted product text in OpenAI requests "
+        "when I click Generate Sales Brief",
+        value=False,
+    )
+    st.caption(
+        "Upload only material you are authorized to use. "
+        "Document text is user-provided context, not verified web evidence. "
+        "Experiment downloads will contain it if you include it."
+    )
+
     submitted = st.form_submit_button("Review Inputs")
 
 
@@ -132,6 +159,10 @@ if submitted:
     st.session_state.account_inputs = None
     st.session_state.retrieved_pages = []
     st.session_state.brief_result = None
+    # Clear old document text on every new form submission.
+    # Removing a file must not leave its earlier contents in a new report.
+    st.session_state.product_document = None
+    st.session_state.include_product_document = False
 
     required_fields = {
         "Product name": product_name,
@@ -177,10 +208,30 @@ if submitted:
                 "HTTP or HTTPS URL."
             )
 
+    # Read optional document contents only when the form is submitted.
+    # Check upload size before copying its bytes into the parser.
+    document = None
+    if product_upload is not None:
+        if product_upload.size > MAX_FILE_BYTES:
+            errors.append("Please upload a file no larger than 5 MB.")
+        else:
+            document = read_document(
+                product_upload.name, product_upload.getvalue()
+            )
+            if document["error"]:
+                errors.append(document["error"])
+
     if errors:
         for message in errors:
             st.error(message)
     else:
+        # Store extracted text and the user's sending preference separately
+        # from the web-source list. Do not assign the document a web ID.
+        st.session_state.product_document = document
+        st.session_state.include_product_document = bool(
+            document and include_document
+        )
+
         # Store the validated inputs for retrieval and report generation.
         st.session_state.account_inputs = {
             "Product name": product_name.strip(),
@@ -204,6 +255,22 @@ if st.session_state.account_inputs is not None:
     st.caption(
         "After editing the form, click Review Inputs again to apply changes."
     )
+
+    # Show the last submitted document, not unsaved form edits.
+    # Plain text avoids interpreting document contents as Markdown.
+    document = st.session_state.product_document
+    if document is not None:
+        st.subheader("Product Document Preview")
+        st.write("Filename:", document["filename"])
+        st.write("Characters extracted:", len(document["text"]))
+        for warning in document["warnings"]:
+            st.warning(warning)
+        with st.expander("View extracted product text"):
+            st.text(document["text"])
+        if st.session_state.include_product_document:
+            st.info("This text will be sent to OpenAI when you generate a brief.")
+        else:
+            st.info("Preview only: this document will not be sent to OpenAI.")
 
     # Retrieval is separate from form submission and GPT generation.
     # This button downloads websites but does not spend API credit.
@@ -279,6 +346,13 @@ if st.session_state.retrieved_pages:
                     result = generate_brief(
                         st.session_state.account_inputs,
                         pages,
+                        # Pass only successfully extracted text that the
+                        # user explicitly chose to include in generation.
+                        product_document=(
+                            st.session_state.product_document
+                            if st.session_state.include_product_document
+                            else None
+                        ),
                     )
                 # Preserve failed-page information too, so the experiment
                 # describes retrieval coverage rather than hiding failures.
@@ -354,10 +428,10 @@ if st.session_state.brief_result is not None:
     # Combine the draft, findings, usage, and checks in one human-readable
     # experiment download. Editing this number does not call the model.
     experiment_number = st.number_input(
-        "Experiment number for downloads", min_value=1, value=3, step=1
+        "Experiment number for downloads", min_value=1, value=4, step=1
     )
     record = (
-        f"# Experiment {experiment_number} â€” Sales Brief\n\n"
+        f"# Experiment {experiment_number} - Sales Brief\n\n"
         f"Generated (UTC): {result.get('generated_at_utc', 'not recorded')}\n\n"
         f"Prompt revision: {result.get('prompt_revision', 'not recorded')}\n\n"
         "Status: Generated draft; human factual review required.\n\n"
@@ -387,3 +461,5 @@ if st.session_state.brief_result is not None:
         file_name=f"experiment_{int(experiment_number):02d}_snapshot.json",
         mime="application/json",
     )
+
+# END OF FILE
