@@ -10,6 +10,9 @@ Workflow:
 # Streamlit creates the browser interface.
 import streamlit as st
 
+# Build downloadable experiment records without another model request.
+import json
+
 # urlparse helps check the format of website addresses.
 from urllib.parse import urlparse
 
@@ -70,7 +73,7 @@ with st.form("sales_inputs"):
 
     # Each line becomes a separate competitor source.
     competitor_urls = st.text_area(
-        "Competitor URLs — one per line",
+        "Competitor URLs â€” one per line",
         value="\n".join([
             "https://coachmenrv.com/nova",
             "https://coachmenrv.com/pixel",
@@ -107,8 +110,17 @@ with st.form("sales_inputs"):
     # may lack, such as staff roles, new inventory, or company news.
     # This optional field does not replace the prospect's main URL.
     additional_urls = st.text_area(
-        "Additional prospect source URLs — optional, one per line",
-        value="https://www.sunshinestatervs.com/--xstaff",
+        "Additional prospect source URLs â€” optional, one per line",
+        # Save these as defaults so restarting does not lose inventory pages.
+        # They remain editable for other prospective accounts.
+        value="\n".join([
+            "https://www.sunshinestatervs.com/--xstaff",
+            "https://www.sunshinestatervs.com/--inventory?condition=new",
+            "https://www.sunshinestatervs.com/--inventory?condition=new&pg=2",
+            "https://www.sunshinestatervs.com/--inventory?condition=new&pg=3",
+            "https://www.sunshinestatervs.com/--inventory?condition=new&pg=4",
+            "https://www.sunshinestatervs.com/--inventory?condition=new&pg=5",
+        ]),
     )
 
     submitted = st.form_submit_button("Review Inputs")
@@ -266,8 +278,18 @@ if st.session_state.retrieved_pages:
                 with st.spinner("Researching evidence and drafting brief..."):
                     result = generate_brief(
                         st.session_state.account_inputs,
-                        usable_pages,
+                        pages,
                     )
+                # Preserve failed-page information too, so the experiment
+                # describes retrieval coverage rather than hiding failures.
+                result["retrieval_summary"] = {
+                    "attempted": len(pages),
+                    "readable": len(usable_pages),
+                    "failures": [
+                        {"url": p["url"], "error": p["error"]}
+                        for p in pages if p["error"]
+                    ],
+                }
                 st.session_state.brief_result = result
 
             except OpenAIError:
@@ -295,6 +317,21 @@ if st.session_state.brief_result is not None:
     st.subheader("Draft Sales Brief")
     st.markdown(result["report"])
 
+    # These checks run locally and incur no API charge.
+    # Passing them does not mean the claims are factually correct.
+    checks = result.get("checks")
+    if checks:
+        st.write("Body word count:", checks["word_count"])
+        if checks["mechanical_checks_passed"]:
+            st.success("Mechanical checks passed. Factual review is still required.")
+        else:
+            for warning in checks["warnings"]:
+                st.warning(warning)
+        with st.expander("Review automatic checks"):
+            st.write(checks)
+    else:
+        st.info("This older result has no automatic checks. Generate a new draft when ready.")
+
     # Show the underlying research and source records for review.
     with st.expander("Review research findings"):
         st.markdown(result["research"])
@@ -312,4 +349,41 @@ if st.session_state.brief_result is not None:
         data=result["report"],
         file_name="FreedomFlyer_sales_brief.md",
         mime="text/markdown",
+    )
+
+    # Combine the draft, findings, usage, and checks in one human-readable
+    # experiment download. Editing this number does not call the model.
+    experiment_number = st.number_input(
+        "Experiment number for downloads", min_value=1, value=3, step=1
+    )
+    record = (
+        f"# Experiment {experiment_number} â€” Sales Brief\n\n"
+        f"Generated (UTC): {result.get('generated_at_utc', 'not recorded')}\n\n"
+        f"Prompt revision: {result.get('prompt_revision', 'not recorded')}\n\n"
+        "Status: Generated draft; human factual review required.\n\n"
+        "## Generated Brief\n\n" + result["report"]
+        + "\n\n## Research Findings\n\n" + result["research"]
+        + "\n\n## Model and Token Usage\n\n```json\n"
+        + json.dumps(result["usage"], indent=2) + "\n```"
+        + "\n\n## Automatic Checks\n\n```json\n"
+        + json.dumps(result.get("checks", {}), indent=2) + "\n```"
+        + "\n\n## Retrieval Summary\n\n```json\n"
+        + json.dumps(result.get("retrieval_summary", {}), indent=2)
+        + "\n```\n\n## Human Review Notes\n\nPending review.\n"
+    )
+    st.download_button(
+        "Download Experiment Record",
+        data=record,
+        file_name=f"experiment_{int(experiment_number):02d}_sales_brief.md",
+        mime="text/markdown",
+    )
+
+    # JSON also preserves inputs, exact prompts, and retrieved text.
+    # This supports later auditing without downloading the same pages.
+    # Inspect for private form inputs before sharing this snapshot.
+    st.download_button(
+        "Download Evidence and Experiment Snapshot",
+        data=json.dumps(result, indent=2, ensure_ascii=False),
+        file_name=f"experiment_{int(experiment_number):02d}_snapshot.json",
+        mime="application/json",
     )

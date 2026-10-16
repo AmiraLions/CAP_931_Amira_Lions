@@ -5,11 +5,54 @@ This module does not call GPT or generate a report.
 It collects source material that we can later give to the model.
 """
 
+# Regular expressions help identify short error-only page responses.
+import re
+
 # requests sends HTTP requests to websites.
 import requests
 
 # BeautifulSoup helps us find content inside a page's HTML.
 from bs4 import BeautifulSoup
+
+
+def page_quality_error(text, title=""):
+    """Flag common error-only pages; this is a conservative heuristic."""
+    # Normalize whitespace so the check handles line breaks and spacing.
+    # Do not reject every page containing the word error: a useful
+    # troubleshooting article or inventory page can legitimately use it.
+    normalized = " ".join(text.split()).lower()
+    if not normalized:
+        return "No readable text was found on this page."
+
+    # Error headings are strong signals even if navigation adds text.
+    error_titles = {
+        "access denied", "403 forbidden", "404 not found",
+        "page not found", "just a moment...", "attention required! | cloudflare",
+    }
+    title_key = " ".join(title.split()).lower()
+    if title_key in error_titles:
+        return "The website returned an error or access-check page."
+
+    # Short responses containing these phrases often contain interface
+    # text instead of product evidence. Include the misspelling observed
+    # in our saved Travato response, but do not infer why it failed.
+    phrases = (
+        "an error has occurred", "an error has occured",
+        "access denied", "verify you are human",
+        "checking your browser", "enable javascript and cookies to continue",
+        "the requested page could not be found",
+    )
+    if len(normalized.split()) <= 150 and any(
+        phrase in normalized for phrase in phrases
+    ):
+        return (
+            "The page appears to contain an error or access-check message "
+            "rather than usable research content. Review the source manually."
+        )
+
+    # These rules will not detect every error page or JavaScript shell.
+    # Passing them does not establish factual accuracy or completeness.
+    return None
 
 
 def fetch_page(url):
@@ -106,6 +149,15 @@ def fetch_page(url):
             if line.strip()
         )
 
+        # Check the full extracted text before truncation.
+        # A server can return HTTP 200 even when the page displays an error.
+        # An error value excludes this source from usable_pages in app.py.
+        quality_error = page_quality_error(text, result["title"])
+        if quality_error:
+            result["error"] = quality_error
+            # Keep text empty so unusable content is not passed to GPT.
+            return result
+
         # Keep at most 20,000 characters from this page.
         # This limits stored text and helps control later model costs.
         # Characters are not the same as tokens.
@@ -133,3 +185,5 @@ def fetch_page(url):
     # Defining this function does not download anything.
     # A request happens only when code calls fetch_page(url).
     return result
+
+# END OF FILE
