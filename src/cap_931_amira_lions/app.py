@@ -461,5 +461,159 @@ if st.session_state.brief_result is not None:
         file_name=f"experiment_{int(experiment_number):02d}_snapshot.json",
         mime="application/json",
     )
+# PDF EXPORT
+# This section formats the existing result without contacting OpenAI.
+from cap_931_amira_lions.report_generator import build_report_pdf
+import hashlib
 
-# END OF FILE
+
+# Show PDF controls only when this browser session has a generated brief.
+if st.session_state.brief_result is not None:
+    pdf_result = st.session_state.brief_result
+
+    st.subheader("Prepare One-Page PDF")
+    st.caption(
+        "Review factual claims and citations before exporting. "
+        "Formatting a PDF does not verify its accuracy."
+    )
+
+    # Use the body without the Sources section.
+    # The PDF generator builds references from the source records.
+    original_body = pdf_result["report_body"]
+
+    # Give each generated result its own editor.
+    # This prevents edits from an earlier result appearing in a new one.
+    result_id = hashlib.sha256(
+        (
+            pdf_result.get("generated_at_utc", "")
+            + original_body
+        ).encode("utf-8")
+    ).hexdigest()
+
+    edited_body = st.text_area(
+        "Brief body for PDF - editable",
+        value=original_body,
+        height=350,
+        key=f"pdf_editor_{result_id}",
+    )
+
+    # Fingerprint the exact text and sources used for this PDF.
+    # If either changes, hide any PDF prepared from older contents.
+    pdf_signature = hashlib.sha256(
+        (
+            edited_body
+            + json.dumps(pdf_result["sources"], sort_keys=True)
+        ).encode("utf-8")
+    ).hexdigest()
+
+    if st.button("Prepare PDF"):
+        # Discard an older prepared file before attempting a new one.
+        st.session_state.prepared_pdf = None
+
+        # Describe editing honestly without claiming factual approval.
+        if edited_body != original_body:
+            review_status = (
+                "AI draft edited in app; human factual review required."
+            )
+        else:
+            review_status = (
+                "AI-generated draft; human factual review required."
+            )
+
+        try:
+            pdf_bytes = build_report_pdf(
+                body=edited_body,
+                sources=pdf_result["sources"],
+                review_status=review_status,
+            )
+
+            # Store bytes so downloading does not regenerate the report.
+            st.session_state.prepared_pdf = {
+                "signature": pdf_signature,
+                "bytes": pdf_bytes,
+            }
+
+            st.success("One-page PDF prepared.")
+
+        except ValueError as error:
+            # For example, the content may not fit on one page,
+            # or an edited citation may reference an unknown source.
+            st.error(str(error))
+
+    prepared = st.session_state.get("prepared_pdf")
+
+    # Offer only a PDF matching the current editor text and sources.
+    if prepared and prepared["signature"] == pdf_signature:
+        st.download_button(
+            "Download One-Page PDF",
+            data=prepared["bytes"],
+            file_name="FreedomFlyer_sales_brief.pdf",
+            mime="application/pdf",
+        )
+# LOAD A SAVED EXPERIMENT
+# This section is outside the form and appears even without a new brief.
+# Loading saved JSON does not call GPT or retrieve websites.
+
+st.subheader("Open a Saved Experiment")
+
+saved_experiment = st.file_uploader(
+    "Upload an experiment snapshot JSON",
+    type=["json"],
+    key="saved_experiment_upload",
+)
+
+if saved_experiment is not None:
+    if st.button("Load Saved Experiment"):
+        try:
+            # Check size before reading the uploaded file.
+            if saved_experiment.size > 5 * 1024 * 1024:
+                raise ValueError("The snapshot exceeds 5 MB.")
+
+            # Read JSON as data, not executable Python.
+            snapshot = json.loads(
+                saved_experiment.getvalue().decode("utf-8-sig")
+            )
+
+            if not isinstance(snapshot, dict):
+                raise ValueError("Invalid snapshot structure.")
+
+            # Confirm the fields needed to display the saved result.
+            for field in ("report_body", "report", "research"):
+                if not isinstance(snapshot.get(field), str):
+                    raise ValueError("Missing report text.")
+
+            if not isinstance(snapshot.get("sources"), list):
+                raise ValueError("Missing source list.")
+
+            if not isinstance(snapshot.get("usage"), list):
+                raise ValueError("Missing usage list.")
+
+            for source in snapshot["sources"]:
+                if not isinstance(source, dict):
+                    raise ValueError("Invalid source record.")
+
+                for field in ("id", "title", "url"):
+                    if not isinstance(source.get(field), str):
+                        raise ValueError("Incomplete source record.")
+
+            # Recalculate checks using the current checker.
+            from cap_931_amira_lions.llm_client import check_report
+
+            snapshot["checks"] = check_report(
+                snapshot["report_body"], snapshot["sources"]
+            )
+
+            # Store the result and remove any previously prepared PDF.
+            st.session_state.brief_result = snapshot
+            st.session_state.prepared_pdf = None
+
+            # Refresh the app to display the loaded report above.
+            st.rerun()
+
+        except (ValueError, UnicodeDecodeError):
+            st.error(
+                "Could not load this file. Use a JSON experiment "
+                "snapshot downloaded from this app."
+            )
+
+# END OF SAVED EXPERIMENT LOADER

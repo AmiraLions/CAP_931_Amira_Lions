@@ -1,0 +1,3 @@
+# Preserve PDF and image bytes exactly; never convert line endings.
+*.pdf binary
+*.png binary
